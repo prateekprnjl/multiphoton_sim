@@ -5,14 +5,14 @@ project(main LANGUAGES CXX)
 option(ENABLE_MPI "Enable MPI parallel support" ON)
 
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(PETSC REQUIRED IMPORTED_TARGET PETSc)
+pkg_check_modules(PETSC-COMPLEX REQUIRED IMPORTED_TARGET PETSc)
 
-add_executable(main main.cpp)
+add_executable(dipole src/dipole.cpp)
 
-target_link_libraries(main PRIVATE PkgConfig::PETSC)
+target_link_libraries(dipole PRIVATE PkgConfig::PETSC-COMPLEX)
 
 if(ENABLE_MPI)
     find_package(MPI REQUIRED)
-    target_link_libraries(main PRIVATE MPI::MPI_CXX)
-    target_compile_definitions(main PRIVATE USE_MPI)
+    target_link_libraries(dipole PRIVATE MPI::MPI_CXX)
+    target_compile_definitions(dipole PRIVATE USE_MPI)
 endif()
