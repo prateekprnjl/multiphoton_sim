@@ -11,11 +11,12 @@ public:
     PetscErrorCode load(const char* filename);
 
     std::size_t number_of_channels() const;
+    std::size_t cation_for_channel(std::size_t channel) const;
     
     const std::vector<std::size_t>& cs() const;
     const std::vector<std::vector<std::pair<int, int>>>& l_m() const;
 
-    ~Basis() = default;
+    ~Basis();
 
 private:
 

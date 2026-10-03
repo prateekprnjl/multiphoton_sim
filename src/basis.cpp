@@ -61,10 +61,26 @@ std::size_t Basis::number_of_channels() const{
     return n_channels;
 }
 
+/* Helper function to find which channel belongs to which cation state */
+std::size_t Basis::cation_for_channel(std::size_t channel) const{
+    std::size_t count = 0;
+    for (std::size_t i = 0; i < l_m_.size(); ++i) {
+        if (channel < count + l_m_[i].size()) {
+            return i;
+        }
+        count += l_m_[i].size();
+    }
+    throw std::out_of_range("Channel index out of range");
+}
+
+
 const std::vector<std::size_t>& Basis::cs() const{
     return cs_;
 }
 
 const std::vector<std::vector<std::pair<int, int>>>& Basis::l_m() const{
     return l_m_;
+}
+
+Basis::~Basis(){
 }

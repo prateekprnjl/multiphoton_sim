@@ -14,6 +14,7 @@ add_executable(main
     main.cpp 
     src/basis.cpp
     src/bound_continuum.cpp
+    src/observables/cross_sections.cpp
     )
 
 target_include_directories(main PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -32,6 +33,7 @@ add_executable(test_multi_ph
     tests/test_bound_continuum.cpp 
     src/basis.cpp
     src/bound_continuum.cpp
+    src/observables/cross_sections.cpp
     )
 
 target_include_directories(test_multi_ph PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
