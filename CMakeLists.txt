@@ -12,6 +12,7 @@ pkg_check_modules(PETSC-COMPLEX REQUIRED IMPORTED_TARGET PETSc)
 
 add_executable(main 
     main.cpp 
+    src/basis.cpp
     src/bound_continuum.cpp
     )
 
@@ -25,21 +26,23 @@ if(ENABLE_MPI)
 endif()
 
 # --- TESTING --- #
-add_executable(test_bound_continuum 
+add_executable(test_multi_ph
     tests/test_main.cpp 
+    tests/test_basis.cpp
     tests/test_bound_continuum.cpp 
+    src/basis.cpp
     src/bound_continuum.cpp
     )
 
-target_include_directories(test_bound_continuum PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(test_bound_continuum PRIVATE PkgConfig::PETSC-COMPLEX)
-target_link_libraries(test_bound_continuum PRIVATE Catch2::Catch2)
+target_include_directories(test_multi_ph PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_multi_ph PRIVATE PkgConfig::PETSC-COMPLEX)
+target_link_libraries(test_multi_ph PRIVATE Catch2::Catch2)
 
 if(ENABLE_MPI)
-    target_link_libraries(test_bound_continuum PRIVATE MPI::MPI_CXX)
-    target_compile_definitions(test_bound_continuum PRIVATE USE_MPI)
+    target_link_libraries(test_multi_ph PRIVATE MPI::MPI_CXX)
+    target_compile_definitions(test_multi_ph PRIVATE USE_MPI)
 endif()
 
 add_test(
-    NAME test_bound_continuum 
-    COMMAND test_bound_continuum)
+    NAME test_multi_ph 
+    COMMAND test_multi_ph)
