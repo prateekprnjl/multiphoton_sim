@@ -11,12 +11,13 @@ class CrossSections {
 
 public:
 
-    PetscErrorCode calculate(const BoundContinuum& bc, const char* filename);
+    PetscErrorCode calculate(const char* filename, const BoundContinuum& bc);
     PetscErrorCode cation_cross_sections(const Basis& basis);
     PetscErrorCode total_cross_sections();
     PetscErrorCode write(const char* filename, const Basis& basis, const BoundContinuum& bc) const;
 
-    Vec total() const;
+    PetscErrorCode calculate_all(const char* file_in, const Basis& basis, 
+        const BoundContinuum& bc, const char* file_out);
 
     ~CrossSections();
 

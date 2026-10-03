@@ -11,13 +11,13 @@
 
 #include <petscsys.h>
 
-PetscErrorCode CrossSections::calculate(const BoundContinuum& bc, const char* filename){
+PetscErrorCode CrossSections::calculate(const char* file_in, const BoundContinuum& bc){
 
     const double MBn = 28.002852053;    // Bohr radius in SI units
     const double sol = 1.0/137.0;           // Speed of light in Hartree units
 
     /* Read the initial state energy E_0 */
-    std::ifstream energy_file(filename);
+    std::ifstream energy_file(file_in);
     if (!energy_file){
         SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_FILE_OPEN, "H_Eigenvalues file missing.\n");
     }
@@ -133,13 +133,9 @@ PetscErrorCode CrossSections::total_cross_sections(){
     return PETSC_SUCCESS;
 }
 
-Vec CrossSections::total() const{
-    return total_sigma_;
-}
-
-PetscErrorCode CrossSections::write(const char* filename, const Basis& basis, const BoundContinuum& bc) const{
+PetscErrorCode CrossSections::write(const char* file_out, const Basis& basis, const BoundContinuum& bc) const{
     const double eV = 27.2114079527;    // Hartree to eV conversion
-    std::ofstream file(filename);
+    std::ofstream file(file_out);
 
     if (!file) {
         SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_FILE_OPEN, "Could not open cross-section output file.\n");
@@ -182,6 +178,16 @@ PetscErrorCode CrossSections::write(const char* filename, const Basis& basis, co
     }
     PetscCall(VecRestoreArrayRead(total_sigma_, &total_array));
 
+    return PETSC_SUCCESS;
+}
+
+PetscErrorCode CrossSections::calculate_all(const char* file_in, const Basis& basis, 
+        const BoundContinuum& bc, const char* file_out){
+    CrossSections::calculate(file_in, bc);
+    CrossSections::cation_cross_sections(basis);
+    CrossSections::total_cross_sections();
+    CrossSections::write(file_out, basis, bc);
+    
     return PETSC_SUCCESS;
 }
 
