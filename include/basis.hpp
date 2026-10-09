@@ -2,6 +2,7 @@
 #define BASIS_HPP
 
 #include <cstddef>
+#include <vector>
 #include <petscvec.h>
 
 class Basis{
