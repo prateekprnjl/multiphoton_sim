@@ -2,6 +2,7 @@
 #define CROSS_SECTIONS_HPP
 
 #include <cstddef>
+#include <vector>
 #include <petscvec.h>
 
 class Basis;

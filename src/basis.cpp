@@ -3,6 +3,9 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <cstddef>
+#include <utility>
+#include <vector>
 
 #include <petscsys.h>
 

@@ -4,6 +4,7 @@
 #include <fstream>
 #include <sstream>
 #include <complex>
+#include <vector>
 
 #include <petscsys.h>
 

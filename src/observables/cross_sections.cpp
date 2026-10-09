@@ -7,6 +7,7 @@
 #include <fstream>
 #include <sstream>
 #include <complex>
+#include <vector>
 #include <cmath>
 
 #include <petscsys.h>
