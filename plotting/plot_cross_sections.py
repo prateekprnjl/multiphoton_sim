@@ -19,7 +19,7 @@ def load_data(filename):
     return data
 
 
-def plot_cross_sections(filename, states=None, all=False, output=None, show=True,):
+def plot_cross_sections(filename, states=None, all=False, output=None, show=True):
     """
     Plot cation cross sections as a function of energy.
 
@@ -67,7 +67,7 @@ def plot_cross_sections(filename, states=None, all=False, output=None, show=True
     fig.tight_layout()
 
     if output is not None:
-        fig.savefig(output, dpi=300, bbox_inches="tight",)
+        fig.savefig(output, dpi=300, bbox_inches="tight")
         print(f"Saved figure to {output}")
 
     if show:

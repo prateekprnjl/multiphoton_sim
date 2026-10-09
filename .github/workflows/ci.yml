@@ -1,0 +1,37 @@
+name : CI
+
+on : [push, pull_request]
+
+permissions:
+    contents: read
+
+jobs:
+    build-and-test:
+        runs-on: ubuntu-latest
+        
+        steps:
+            - name: Check out repositories
+              uses: actions/checkout@v4
+
+            - name: Install dependencies
+              run: sudo apt-get install -y build-essential cmake pkg-config libpetsc-complex-dev libcatch2-dev libopenmpi-dev openmpi-bin
+            
+            - name: Setup plotting
+              uses: actions/setup-python@v5
+              with:
+                python-version: "3.12"
+
+            - name: Configure
+              run: cmake -S . -B build -DENABLE_MPI=OFF
+
+            - name: Compile
+              run: cmake --build build -j
+            
+            - name: test-package
+              run: ctest --test-dir build --output-on-failure
+
+            - name: Dependencies for plotting
+              run: python -m pip3 install plotting/requirements.txt
+
+
+            

@@ -13,7 +13,7 @@
 
 PetscErrorCode CrossSections::calculate(const char* file_in, const BoundContinuum& bc){
 
-    const double MBn = 28.002852053;    // Bohr radius in SI units
+    const double MBn = 28.002852053;    // squared Bohr radius in SI units
     const double sol = 1.0/137.0;           // Speed of light in Hartree units
 
     /* Read the initial state energy E_0 */
@@ -21,8 +21,6 @@ PetscErrorCode CrossSections::calculate(const char* file_in, const BoundContinuu
     if (!energy_file){
         SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_FILE_OPEN, "H_Eigenvalues file missing.\n");
     }
-    
-    /* Skip the first line, II float on 2nd line is E_0 */
     std::size_t i=0;
     std::string line;
     std::getline(energy_file, line); std::getline(energy_file, line);
@@ -42,7 +40,6 @@ PetscErrorCode CrossSections::calculate(const char* file_in, const BoundContinuu
     VecSetSizes(sigma_, PETSC_DECIDE, n_grid_ * n_channels_);
     VecSetFromOptions(sigma_);
 
-    /* Access PETSc data */
     const PetscScalar* energy_array;
     const PetscScalar* dipole_array;
     PetscScalar* sigma_array;
@@ -107,12 +104,10 @@ PetscErrorCode CrossSections::cation_cross_sections(const Basis& basis){
 
     PetscCall(VecRestoreArrayRead(sigma_, &sigma_array));
 
-    /* Complete the ADD_VALUES operations */
     for (Vec& vec : cation_sigma_) {
         PetscCall(VecAssemblyBegin(vec));
         PetscCall(VecAssemblyEnd(vec));
     }
-
     return PETSC_SUCCESS;
 }
 

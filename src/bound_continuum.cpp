@@ -46,7 +46,6 @@ PetscErrorCode BoundContinuum::load(const char* filename){
             SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_FILE_READ, "Broken energy-channel in Bound-Continuum Dipole file @ Line: %d\n", static_cast<PetscInt>(i));
         }
 
-        /* Store energy */
         energy_values.push_back(energy);
 
         /* Track maximum number of channels */
@@ -54,7 +53,6 @@ PetscErrorCode BoundContinuum::load(const char* filename){
             n_channels = channels;
         }
 
-        /* Reading complex values*/
         std::vector<std::complex<double>> values(channels);
 
         for (std::size_t j=0; j < channels; j++){
