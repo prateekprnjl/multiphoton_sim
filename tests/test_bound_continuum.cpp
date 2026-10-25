@@ -1,3 +1,4 @@
+#include <basis.hpp>
 #include <bound_continuum.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -5,15 +6,17 @@
 
 TEST_CASE("Bound-continuum file loads correctly"){
     BoundContinuum bc;
+    Basis bas;
 
-    REQUIRE(bc.load("../input/DipoleTransAmpVel_z_FromBoxState_1_1") == PETSC_SUCCESS);
+    REQUIRE(bas.load("../input/scat1.info") == PETSC_SUCCESS);
+    REQUIRE(bc.load("../input/DipoleTransAmpVel_z_FromBoxState_1_1", bas.number_of_channels()) == PETSC_SUCCESS);
 
     PetscInt len_energies;
-    PetscInt len_dipoles;
+    PetscInt len_dipoles_x, len_dipoles_y;
 
     REQUIRE(VecGetSize(bc.energies(), &len_energies) == PETSC_SUCCESS);
-    REQUIRE(VecGetSize(bc.dipoles(), &len_dipoles) == PETSC_SUCCESS);
+    REQUIRE(MatGetSize(bc.dipoles(), &len_dipoles_x, &len_dipoles_y) == PETSC_SUCCESS);
 
     CHECK(bc.grid_size() == static_cast<PetscInt>(len_energies));
-    CHECK(bc.number_of_channels() * bc.grid_size() == static_cast<PetscInt>(len_dipoles));
+    CHECK(bc.number_of_channels() * bc.grid_size() == static_cast<PetscInt>(len_dipoles_x * len_dipoles_y));
 }

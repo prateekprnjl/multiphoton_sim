@@ -3,104 +3,185 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <string>
 #include <complex>
 #include <vector>
 
 #include <petscsys.h>
+#include <petscvec.h>
+#include <petscsys.h>
 
-PetscErrorCode BoundContinuum::load(const char* filename){
+PetscErrorCode BoundContinuum::load(const char* filename, std::size_t number_of_channels)
+{
+    PetscFunctionBeginUser;
 
-    /* Open the bound-continuum dipoles */
-    std::ifstream dipoles_b_c(filename);
+    MPI_Comm comm = PETSC_COMM_WORLD;
+    PetscMPIInt rank;
+    PetscCallMPI(MPI_Comm_rank(comm, &rank));
 
-    if (!dipoles_b_c){
-        SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_FILE_OPEN, "Bound-Continuum file missing.\n");
-    }
+    const PetscInt nch = static_cast<PetscInt>(number_of_channels);
 
-    /* Temporary C++ vectors for reading from file */
+    /* Rank 0 reads the file. All ranks receive the parsed data. */
+    PetscInt parse_error = 0;
+    PetscInt grid_size = 0;
+
     std::vector<double> energy_values;
-    std::vector<std::vector<std::complex<double>>> dipole_values;
-    
-    /* Reading values from dipole file w/ header and variable number of channels */
-    std::string line;
-    std::size_t i=0;
-    while(std::getline(dipoles_b_c, line)){
+    std::vector<double> dipole_parts;
 
-        std::stringstream ss(line);
+    if (rank == 0) {
+        std::ifstream file(filename);
 
-        /* Header line "# number_of_lines"*/
-        if (i==0){
-            char hash_c;
-            if (!(ss >> hash_c >> n_grid) || hash_c != '#'){
-                SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_FILE_READ, "Invalid Bound-Continuum Dipole header.\n");
+        if (!file) {
+            parse_error = 1;
+        } 
+        else {
+            std::string line;
+            std::size_t line_number = 0;
+            std::size_t declared_grid_size = 0;
+            std::size_t last_channels = 0;
+
+            bool header_read = false;
+
+            while (std::getline(file, line)) {
+                ++line_number;
+
+                // Header: # number_of_lines
+                if (!header_read) {
+                    std::stringstream ss(line);
+                    char hash;
+                    std::size_t count;
+
+                    if (!(ss >> hash >> count) || hash != '#' || count == 0 || count > static_cast<std::size_t>(PETSC_MAX_INT)) {
+                        parse_error = 2;
+                        break;
+                    }
+
+                    declared_grid_size = count;
+                    header_read = true;
+
+                    energy_values.reserve(count);
+                    dipole_parts.reserve(2 * count * number_of_channels);
+
+                    continue;
+                }
+
+                // Ignore blank lines.
+                if (line.find_first_not_of(" \t\r") == std::string::npos) {
+                    continue;
+                }
+
+                std::stringstream ss(line);
+                double energy;
+                std::size_t channels;
+
+                if (!(ss >> energy >> channels)) {
+                    parse_error = 3;
+                    break;
+                }
+
+                std::vector<double> row(2 * number_of_channels, 0.0);
+
+                for (std::size_t j = 0; j < channels; ++j) {
+                    double re, im;
+                    if (!(ss >> re >> im)) {
+                        parse_error = 3;
+                        break;
+                    }
+                    row[2 * j]     = re;
+                    row[2 * j + 1] = im;
+                }
+
+                if (parse_error != 0) {
+                    break;
+                }
+
+                energy_values.push_back(energy);
+                dipole_parts.insert(dipole_parts.end(), row.begin(), row.end());
+                last_channels = channels;
             }
-            ++i;
-            continue;
-        }
 
-        /* Dipole lines format: 
-        Energy number_of_channels real_part_1 complex_part_1 real_part_2 complex_part_2 ... complex_part_{num_of_channels} */
-        double energy;
-        std::size_t channels;
-
-        if (!(ss >> energy >> channels)){
-            SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_FILE_READ, "Broken energy-channel in Bound-Continuum Dipole file @ Line: %d\n", static_cast<PetscInt>(i));
-        }
-
-        energy_values.push_back(energy);
-
-        /* Track maximum number of channels */
-        if (channels > n_channels){
-            n_channels = channels;
-        }
-
-        std::vector<std::complex<double>> values(channels);
-
-        for (std::size_t j=0; j < channels; j++){
-            double real_part, imaginary_part;
-
-            if (!(ss >> real_part >> imaginary_part)){
-                SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_FILE_READ, "Broken channel value line in Bound-Continuum Dipole file @ Line: %d\n", static_cast<PetscInt>(i));
+            // Validate the complete file.
+            if (parse_error == 0) {
+                if (!header_read || energy_values.size() != declared_grid_size) {
+                    parse_error = 5;
+                } 
+                else if (last_channels != number_of_channels) {
+                    parse_error = 6;
+                }
             }
 
-            values[j] = std::complex<double> (real_part, imaginary_part);
-        }
-        dipole_values.push_back(values);
-        ++i;
-    }
-
-    /* Pad with 0 + 0j for missing channels */
-    for (auto& row : dipole_values){
-        row.resize(n_channels, std::complex<double>(0.0, 0.0));
-    }
-
-    /* Convert to PETSc Complex Vectors */
-    VecCreate(PETSC_COMM_WORLD, &energies_);
-    VecSetSizes(energies_, PETSC_DECIDE, n_grid);
-    VecSetFromOptions(energies_);
-
-    PetscInt total = static_cast<PetscInt>(n_grid * n_channels);
-
-    VecCreate(PETSC_COMM_WORLD, &dipoles_);
-    VecSetSizes(dipoles_, PETSC_DECIDE, total);
-    VecSetFromOptions(dipoles_);
-
-    for (std::size_t i = 0; i < n_grid; ++i){
-        
-        VecSetValue(energies_, static_cast<PetscInt>(i), energy_values[i], INSERT_VALUES);
-        
-        for(std::size_t j = 0; j < n_channels; ++j){
-            PetscInt index = static_cast<PetscInt>(i * n_channels + j);
-            PetscScalar value = dipole_values[i][j];
-            VecSetValue(dipoles_, index, value, INSERT_VALUES);
+            if (parse_error == 0) {
+                grid_size = static_cast<PetscInt>(declared_grid_size);
+            }
         }
     }
-    VecAssemblyBegin(energies_);
-    VecAssemblyEnd(energies_);
-    VecAssemblyBegin(dipoles_);
-    VecAssemblyEnd(dipoles_);
 
-    return PETSC_SUCCESS;
+    {
+    /* Check if file loaded correctly */
+    PetscCallMPI(MPI_Bcast(&parse_error, 1, MPIU_INT, 0, comm));
+    PetscCheck(parse_error == 0, comm, PETSC_ERR_FILE_READ,
+               "Failed to read the Bound-Continuum dipole file. "
+               "Error code: %" PetscInt_FMT
+               ". Check the file, its header, row data, "
+               "and final channel count.",
+               parse_error);
+    }
+
+    PetscCallMPI(MPI_Bcast(&grid_size, 1, MPIU_INT, 0, comm));
+
+    // Broadcast energies and dipole components.
+    const PetscMPIInt energy_count = static_cast<PetscMPIInt>(grid_size);
+    const PetscMPIInt component_count = static_cast<PetscMPIInt>(2 * static_cast<std::size_t>(grid_size) * number_of_channels);
+
+    if (rank != 0) {
+        energy_values.resize(static_cast<std::size_t>(grid_size));
+        dipole_parts.resize(static_cast<std::size_t>(component_count));
+    }
+
+    PetscCallMPI(MPI_Bcast(energy_values.data(), energy_count, MPI_DOUBLE, 0, comm));
+    PetscCallMPI(MPI_Bcast(dipole_parts.data(), component_count, MPI_DOUBLE, 0, comm));
+
+    // Store metadata.
+    n_grid = static_cast<std::size_t>(grid_size);
+    max_channels_in_dipoles = number_of_channels;
+
+    // Create the distributed energy vector.
+    PetscCall(VecCreate(comm, &energies_));
+    PetscCall(VecSetSizes(energies_, PETSC_DECIDE, grid_size));
+    PetscCall(VecSetFromOptions(energies_));
+
+    PetscInt energy_start, energy_end;
+    PetscCall(VecGetOwnershipRange(energies_, &energy_start, &energy_end));
+
+    for (PetscInt i = energy_start; i < energy_end; ++i) {
+        PetscCall(VecSetValue(energies_, i, static_cast<PetscScalar>(energy_values[static_cast<std::size_t>(i)]), INSERT_VALUES));
+    }
+
+    PetscCall(VecAssemblyBegin(energies_));
+    PetscCall(VecAssemblyEnd(energies_));
+    PetscCall(MatCreate(comm, &dipoles_));
+    PetscCall(MatSetSizes(dipoles_, PETSC_DECIDE, PETSC_DECIDE, grid_size, nch));
+    PetscCall(MatSetFromOptions(dipoles_));
+    PetscCall(MatSetUp(dipoles_));
+
+    PetscInt row_start, row_end;
+    PetscCall(MatGetOwnershipRange(dipoles_, &row_start, &row_end));
+
+    // Each rank inserts only its locally owned rows.
+    for (PetscInt i = row_start; i < row_end; ++i) {
+        for (PetscInt j = 0; j < nch; ++j) {
+            const std::size_t k = 2 * (static_cast<std::size_t>(i) * number_of_channels + static_cast<std::size_t>(j));
+
+            const PetscScalar value = PetscCMPLX(dipole_parts[k], dipole_parts[k + 1]);
+
+            PetscCall(MatSetValue(dipoles_, i, j, value, INSERT_VALUES));
+        }
+    }
+
+    PetscCall(MatAssemblyBegin(dipoles_, MAT_FINAL_ASSEMBLY));
+    PetscCall(MatAssemblyEnd(dipoles_, MAT_FINAL_ASSEMBLY));
+
+    PetscFunctionReturn(PETSC_SUCCESS);
 }
 
 std::size_t BoundContinuum::grid_size() const{
@@ -108,14 +189,14 @@ std::size_t BoundContinuum::grid_size() const{
 }
 
 std::size_t BoundContinuum::number_of_channels() const{
-    return n_channels;
+    return max_channels_in_dipoles;
 }
 
 Vec BoundContinuum::energies() const{
     return energies_;
 }
 
-Vec BoundContinuum::dipoles() const{
+Mat BoundContinuum::dipoles() const{
     return dipoles_;
 }
 
@@ -124,6 +205,6 @@ BoundContinuum::~BoundContinuum(){
         VecDestroy(&energies_);
     }
     if (dipoles_ != nullptr){
-        VecDestroy(&dipoles_);
+        MatDestroy(&dipoles_);
     }
 }

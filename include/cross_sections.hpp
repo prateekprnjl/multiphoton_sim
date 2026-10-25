@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <vector>
 #include <petscvec.h>
+#include <petscmat.h>
 
 class Basis;
 class BoundContinuum;
@@ -29,7 +30,7 @@ private:
     std::size_t n_grid_ = 0;
     std::size_t n_channels_ = 0;
 
-    Vec sigma_ = nullptr;
+    Mat sigma_ = nullptr;
     Vec total_sigma_ = nullptr;
 
     std::vector<Vec> cation_sigma_;

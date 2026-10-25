@@ -14,7 +14,7 @@ int main(int argc, char **argv)
         CrossSections sigma;
 
         PetscCall(basis.load("../input/scat1.info"));
-        PetscCall(bc.load("../input/DipoleTransAmpVel_z_FromBoxState_1_1"));
+        PetscCall(bc.load("../input/DipoleTransAmpVel_z_FromBoxState_1_1", basis.number_of_channels()));
 
         /* Observables - Cross sections (optional)*/
         PetscCall(sigma.calculate_all("../input/H_Eigenvalues", basis, bc, "../output/cross_sections.dat"));

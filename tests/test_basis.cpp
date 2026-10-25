@@ -9,7 +9,7 @@ TEST_CASE("Scat-info file loads correctly"){
     BoundContinuum bc;
 
     REQUIRE(bas.load("../input/scat1.info") == PETSC_SUCCESS);
-    REQUIRE(bc.load("../input/DipoleTransAmpVel_z_FromBoxState_1_1") == PETSC_SUCCESS);
+    REQUIRE(bc.load("../input/DipoleTransAmpVel_z_FromBoxState_1_1", bas.number_of_channels()) == PETSC_SUCCESS);
 
     CHECK(bc.number_of_channels() == bas.number_of_channels());
     CHECK(bas.cs().size() == bas.l_m().size());

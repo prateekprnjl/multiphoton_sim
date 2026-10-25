@@ -11,105 +11,150 @@
 #include <cmath>
 
 #include <petscsys.h>
+#include <petscmat.h>
+
 
 PetscErrorCode CrossSections::calculate(const char* file_in, const BoundContinuum& bc){
+    PetscFunctionBeginUser;
 
-    const double MBn = 28.002852053;    // squared Bohr radius in SI units
-    const double sol = 1.0/137.0;           // Speed of light in Hartree units
+    const double MBn = 28.002852053;
+    const double sol = 1.0 / 137.0;
 
-    /* Read the initial state energy E_0 */
-    std::ifstream energy_file(file_in);
-    if (!energy_file){
-        SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_FILE_OPEN, "H_Eigenvalues file missing.\n");
+    // Read initial-state energy on rank 0 and broadcast it.
+    PetscMPIInt rank;
+    PetscCallMPI(MPI_Comm_rank(PETSC_COMM_WORLD, &rank));
+
+    PetscInt read_error = 0;
+
+    if (rank == 0) {
+        std::ifstream energy_file(file_in);
+        std::string line;
+        std::size_t index;
+
+        if (!energy_file) {
+            read_error = 1;
+        } 
+        else if (!std::getline(energy_file, line) || !std::getline(energy_file, line)) {
+            read_error = 2;
+        } 
+        else {
+            std::stringstream ss(line);
+
+            if (!(ss >> index >> E_0)) {
+                read_error = 2;
+            }
+        }
     }
-    std::size_t i=0;
-    std::string line;
-    std::getline(energy_file, line); std::getline(energy_file, line);
-    std::stringstream ss(line);
-    if (!(ss >> i >> E_0)){
-        SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_FILE_READ, "Invalid format of H_Eigenvalues file.\n");
-    }
 
-    /* Collect data for cross-section calculation */
+    PetscCallMPI(MPI_Bcast(&read_error, 1, MPIU_INT, 0, PETSC_COMM_WORLD));
+
+    PetscCheck(read_error == 0, PETSC_COMM_WORLD, read_error == 1 ? PETSC_ERR_FILE_OPEN : PETSC_ERR_FILE_READ, "Could not read the initial-state energy.");
+
+    PetscCallMPI(MPI_Bcast(&E_0, 1, MPI_DOUBLE, 0, PETSC_COMM_WORLD));
+
     n_grid_ = bc.grid_size();
     n_channels_ = bc.number_of_channels();
-    Vec energies = bc.energies();
-    Vec dipoles = bc.dipoles();
 
-    /* Create vector to store cross-sections */
-    VecCreate(PETSC_COMM_WORLD, &sigma_);
-    VecSetSizes(sigma_, PETSC_DECIDE, n_grid_ * n_channels_);
-    VecSetFromOptions(sigma_);
+    Vec energies = bc.energies();
+    Mat dipoles = bc.dipoles();
+
+    // Make the energy values available on every rank.
+    Vec energies_all;
+    VecScatter scatter;
+
+    PetscCall(VecScatterCreateToAll(energies, &scatter, &energies_all));
+    PetscCall(VecScatterBegin(scatter, energies, energies_all, INSERT_VALUES, SCATTER_FORWARD));
+    PetscCall(VecScatterEnd(scatter, energies, energies_all, INSERT_VALUES, SCATTER_FORWARD));
 
     const PetscScalar* energy_array;
-    const PetscScalar* dipole_array;
-    PetscScalar* sigma_array;
+    PetscCall(VecGetArrayRead(energies_all, &energy_array));
 
-    VecGetArrayRead(energies, &energy_array);
-    VecGetArrayRead(dipoles, &dipole_array);
-    VecGetArray(sigma_, &sigma_array);
+    // Create the cross-section matrix.
+    if (sigma_ != nullptr) {
+        PetscCall(MatDestroy(&sigma_));
+    }
 
-    /* Calculate Cross-sections */
-    for (std::size_t i = 0; i < n_grid_; ++i) {
+    PetscCall(MatCreate(PETSC_COMM_WORLD, &sigma_));
+    PetscCall(MatSetSizes(sigma_, PETSC_DECIDE, PETSC_DECIDE, static_cast<PetscInt>(n_grid_), static_cast<PetscInt>(n_channels_)));
+    PetscCall(MatSetFromOptions(sigma_));
+    PetscCall(MatSetUp(sigma_));
+
+    // Process only locally owned dipole rows.
+    PetscInt row_start, row_end;
+    PetscCall(MatGetOwnershipRange(dipoles, &row_start, &row_end));
+
+    std::vector<PetscInt> columns(n_channels_);
+    std::vector<PetscScalar> dipole_row(n_channels_);
+
+    for (std::size_t j = 0; j < n_channels_; ++j) {
+        columns[j] = static_cast<PetscInt>(j);
+    }
+
+    for (PetscInt i = row_start; i < row_end; ++i) {
+        PetscCall(MatGetValues(dipoles, 1, &i, static_cast<PetscInt>(n_channels_), columns.data(), dipole_row.data()));
 
         const double omega = PetscRealPart(energy_array[i]) - E_0;
 
         for (std::size_t j = 0; j < n_channels_; ++j) {
 
-            const std::size_t index = i * n_channels_ + j;
-            const std::complex<double> dipole = dipole_array[index];
+            const double cross_section = MBn * sol * 4.0 * M_PI * M_PI * PetscAbsScalar(dipole_row[j]) *
+                PetscAbsScalar(dipole_row[j]) / (3.0 * omega);
 
-            const double sigma = MBn * sol * 4.0 * M_PI * M_PI * std::norm(dipole) / (3.0 * omega);
-            sigma_array[index] = sigma;
+            PetscCall(MatSetValue(sigma_, i, static_cast<PetscInt>(j), cross_section, INSERT_VALUES));
         }
     }
 
-    VecRestoreArrayRead(energies, &energy_array);
-    VecRestoreArrayRead(dipoles, &dipole_array);
-    VecRestoreArray(sigma_, &sigma_array);
+    PetscCall(MatAssemblyBegin(sigma_, MAT_FINAL_ASSEMBLY));
+    PetscCall(MatAssemblyEnd(sigma_, MAT_FINAL_ASSEMBLY));
 
-    return PETSC_SUCCESS;
+    PetscCall(VecRestoreArrayRead(energies_all, &energy_array));
+    PetscCall(VecScatterDestroy(&scatter));
+    PetscCall(VecDestroy(&energies_all));
+
+    PetscFunctionReturn(PETSC_SUCCESS);
 }
 
+
 PetscErrorCode CrossSections::cation_cross_sections(const Basis& basis){
+    PetscFunctionBeginUser;
+
     const std::size_t n_cations = basis.cs().size();
 
-    /* Total number of points */
-    PetscInt n_total;
-    PetscCall(VecGetSize(sigma_, &n_total));
-
-    /* Make a n-cation column vector for individual cation cross-sections */
     cation_sigma_.resize(n_cations, nullptr);
+
     for (std::size_t c = 0; c < n_cations; ++c) {
         PetscCall(VecCreate(PETSC_COMM_WORLD, &cation_sigma_[c]));
-        PetscCall(VecSetSizes(cation_sigma_[c], PETSC_DECIDE, n_grid_));
+        PetscCall(VecSetSizes(cation_sigma_[c], PETSC_DECIDE, static_cast<PetscInt>(n_grid_)));
         PetscCall(VecSetFromOptions(cation_sigma_[c]));
         PetscCall(VecSet(cation_sigma_[c], 0.0));
     }
 
-    /* Add in values for each cation state for different energy points */
-    const PetscScalar* sigma_array;
-    PetscCall(VecGetArrayRead(sigma_, &sigma_array));
-    for (std::size_t i = 0; i < n_grid_; ++i) {
-        for (std::size_t j = 0; j < n_channels_; ++j) {
-            const std::size_t index = i * n_channels_ + j;
+    PetscInt row_start, row_end;
+    PetscCall(MatGetOwnershipRange(sigma_, &row_start, &row_end));
 
-            /* Use the helper function to find the cation state for each channel number */
-            const std::size_t cation = basis.cation_for_channel(j);
+    std::vector<PetscInt> columns(n_channels_);
+    std::vector<PetscScalar> row(n_channels_);
 
-            /* ADD to the existing value at that energy point */
-            PetscCall(VecSetValue(cation_sigma_[cation], static_cast<PetscInt>(i), sigma_array[index],
-                ADD_VALUES));
-        }
+    for (std::size_t j = 0; j < n_channels_; ++j) {
+        columns[j] = static_cast<PetscInt>(j);
     }
 
-    PetscCall(VecRestoreArrayRead(sigma_, &sigma_array));
+    for (PetscInt i = row_start; i < row_end; ++i) {
+        PetscCall(MatGetValues(sigma_, 1, &i, static_cast<PetscInt>(n_channels_), columns.data(), row.data()));
+
+        for (std::size_t j = 0; j < n_channels_; ++j) {
+            const std::size_t cation = basis.cation_for_channel(j);
+
+            PetscCall(VecSetValue(cation_sigma_[cation], i, row[j], ADD_VALUES));
+        }
+    }
 
     for (Vec& vec : cation_sigma_) {
         PetscCall(VecAssemblyBegin(vec));
         PetscCall(VecAssemblyEnd(vec));
     }
-    return PETSC_SUCCESS;
+
+    PetscFunctionReturn(PETSC_SUCCESS);
 }
 
 PetscErrorCode CrossSections::total_cross_sections(){
@@ -130,51 +175,121 @@ PetscErrorCode CrossSections::total_cross_sections(){
 }
 
 PetscErrorCode CrossSections::write(const char* file_out, const Basis& basis, const BoundContinuum& bc) const{
-    const double eV = 27.2114079527;    // Hartree to eV conversion
-    std::ofstream file(file_out);
+    PetscFunctionBeginUser;
 
-    if (!file) {
-        SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_FILE_OPEN, "Could not open cross-section output file.\n");
-    }
+    const double eV = 27.2114079527;
 
-    /* Header */
-    file << "# Energy(eV)";
+    PetscMPIInt rank;
+    PetscCallMPI(MPI_Comm_rank(PETSC_COMM_WORLD, &rank));
 
-    for (std::size_t c = 0; c < basis.cs().size(); ++c) {
-        file << "\tCation" << basis.cs()[c];
-    }
+    // Gather energies to rank 0.
+    VecScatter energy_scatter;
+    Vec energy_root = nullptr;
 
-    file << "\tTotal\n";
+    PetscCall(VecScatterCreateToZero(bc.energies(), &energy_scatter, &energy_root));
 
-    /* Access energies */
-    const PetscScalar* energy_array;
-    PetscCall(VecGetArrayRead(bc.energies(), &energy_array));
+    PetscCall(VecScatterBegin(energy_scatter, bc.energies(), energy_root, INSERT_VALUES, SCATTER_FORWARD));
+    PetscCall(VecScatterEnd(energy_scatter, bc.energies(), energy_root, INSERT_VALUES, SCATTER_FORWARD));
 
-    /* Access cation cross sections */
-    std::vector<const PetscScalar*> cation_arrays(cation_sigma_.size());
+    // Gather each cation's cross-section vector to rank 0.
+    std::vector<VecScatter> cation_scatters(cation_sigma_.size());
+    std::vector<Vec> cation_root(cation_sigma_.size(), nullptr);
+
     for (std::size_t c = 0; c < cation_sigma_.size(); ++c) {
-        PetscCall(VecGetArrayRead(cation_sigma_[c], &cation_arrays[c]));
-    }
-    const PetscScalar* total_array;
-    PetscCall(VecGetArrayRead(total_sigma_, &total_array));
+        PetscCall(VecScatterCreateToZero(cation_sigma_[c], &cation_scatters[c], &cation_root[c]));
 
-    for (std::size_t i = 0; i < n_grid_; ++i) {
-        const double energy_eV = (PetscRealPart(energy_array[i]) - E_0) * eV;
-        file << energy_eV;
-        for (std::size_t c = 0; c < cation_sigma_.size(); ++c) {
-            file << '\t' << PetscRealPart(cation_arrays[c][i]);
+        PetscCall(VecScatterBegin(cation_scatters[c], cation_sigma_[c], cation_root[c], INSERT_VALUES, SCATTER_FORWARD));
+        PetscCall(VecScatterEnd(cation_scatters[c], cation_sigma_[c], cation_root[c], INSERT_VALUES, SCATTER_FORWARD));
+    }
+
+    // Gather the total cross-section vector to rank 0.
+    VecScatter total_scatter;
+    Vec total_root = nullptr;
+
+    PetscCall(VecScatterCreateToZero(total_sigma_, &total_scatter, &total_root));
+
+    PetscCall(VecScatterBegin(total_scatter, total_sigma_, total_root, INSERT_VALUES, SCATTER_FORWARD));
+    PetscCall(VecScatterEnd(total_scatter, total_sigma_, total_root, INSERT_VALUES, SCATTER_FORWARD));
+
+    // Only rank 0 writes the file.
+    PetscInt write_error = 0;
+
+    if (rank == 0) {
+        std::ofstream file(file_out);
+
+        if (!file) {
+            write_error = 1;
+        } else {
+            // Header
+            file << "# Energy(eV)";
+
+            for (std::size_t c = 0; c < basis.cs().size(); ++c) {
+                file << "\tCation" << basis.cs()[c];
+            }
+
+            file << "\tTotal\n";
+
+            // Access the gathered arrays.
+            const PetscScalar* energy_array;
+            PetscCall(VecGetArrayRead(energy_root, &energy_array));
+
+            std::vector<const PetscScalar*> cation_arrays(cation_root.size());
+
+            for (std::size_t c = 0; c < cation_root.size(); ++c) {
+                PetscCall(VecGetArrayRead(cation_root[c], &cation_arrays[c]));
+            }
+
+            const PetscScalar* total_array;
+            PetscCall(VecGetArrayRead(total_root, &total_array));
+
+            for (std::size_t i = 0; i < n_grid_; ++i) {
+                const double energy_eV = (PetscRealPart(energy_array[i]) - E_0) * eV;
+
+                file << energy_eV;
+
+                for (std::size_t c = 0;
+                     c < cation_arrays.size(); ++c) {
+                    file << '\t' << PetscRealPart(cation_arrays[c][i]);
+                }
+
+                file << '\t' << PetscRealPart(total_array[i]) << '\n';
+            }
+
+            PetscCall(VecRestoreArrayRead(energy_root, &energy_array));
+
+            for (std::size_t c = 0; c < cation_root.size(); ++c) {
+                PetscCall(VecRestoreArrayRead(cation_root[c], &cation_arrays[c]));
+            }
+
+            PetscCall(VecRestoreArrayRead(total_root, &total_array));
+
+            if (!file.good()) {
+                write_error = 2;
+            }
         }
-        file << '\t' << PetscRealPart(total_array[i])<< '\n';
     }
 
-    /* Restore arrays */
-    PetscCall(VecRestoreArrayRead(bc.energies(), &energy_array));
+    // Communicate file-writing errors to every rank.
+    PetscCallMPI(MPI_Bcast(&write_error, 1, MPIU_INT, 0, PETSC_COMM_WORLD));
+
+    // Destroy the scatter contexts and gathered vectors.
+    PetscCall(VecScatterDestroy(&energy_scatter));
+    PetscCall(VecDestroy(&energy_root));
+
     for (std::size_t c = 0; c < cation_sigma_.size(); ++c) {
-        PetscCall(VecRestoreArrayRead(cation_sigma_[c], &cation_arrays[c]));
-    }
-    PetscCall(VecRestoreArrayRead(total_sigma_, &total_array));
+        PetscCall(VecScatterDestroy(&cation_scatters[c]));
 
-    return PETSC_SUCCESS;
+        if (cation_root[c] != nullptr) {
+            PetscCall(VecDestroy(&cation_root[c]));
+        }
+    }
+
+    PetscCall(VecScatterDestroy(&total_scatter));
+    PetscCall(VecDestroy(&total_root));
+
+    PetscCheck(write_error == 0, PETSC_COMM_WORLD, write_error == 1 ? PETSC_ERR_FILE_OPEN : PETSC_ERR_FILE_WRITE, "Failed to write cross-section output file.");
+
+    PetscFunctionReturn(PETSC_SUCCESS);
 }
 
 PetscErrorCode CrossSections::calculate_all(const char* file_in, const Basis& basis, 
@@ -187,8 +302,19 @@ PetscErrorCode CrossSections::calculate_all(const char* file_in, const Basis& ba
     return PETSC_SUCCESS;
 }
 
-CrossSections::~CrossSections(){
-    if (sigma_ != nullptr){
-        VecDestroy(&sigma_);
+CrossSections::~CrossSections()
+{
+    if (sigma_ != nullptr) {
+        MatDestroy(&sigma_);
+    }
+
+    for (Vec& vec : cation_sigma_) {
+        if (vec != nullptr) {
+            VecDestroy(&vec);
+        }
+    }
+
+    if (total_sigma_ != nullptr) {
+        VecDestroy(&total_sigma_);
     }
 }
